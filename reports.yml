@@ -1,0 +1,68 @@
+name: Reports
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  security-events: write
+  issues: write
+
+
+jobs:
+  fetch-and-combine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (target repo for combined file)
+        uses: actions/checkout@v4
+
+      - name: Download alerts from all repos
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          repos=("GHAS-demo" "quizapp" "webgoat" "Bazar_Mobileapp" "DevsecGHAS")
+          for repo in "${repos[@]}"; do
+            echo "Fetching $repo..."
+            gh repo clone securitychampi0ns/$repo tmp-$repo
+            cp tmp-$repo/${repo}-alerts.json . || echo "{}" > ${repo}-alerts.json
+            rm -rf tmp-$repo
+          done
+
+      - name: Combine all alerts into one JSON
+        run: |
+          timestamp=$(TZ="Asia/Kolkata" date +"%d-%m-%Y %I:%M:%S %p")
+          version="v1.${{ github.run_number }}"
+          jq -n \
+            --arg timestamp "$timestamp" \
+            --arg version "$version" \
+            --slurpfile  ghas GHAS-demo-alerts.json \
+            --slurpfile  quiz quizapp-alerts.json \
+            --slurpfile  web webgoat-alerts.json \
+            --slurpfile  baz Bazar_Mobileapp-alerts.json \
+            --slurpfile  devsec DevsecGHAS-alerts.json \
+          '{
+              Report_generated: $timestamp,
+              version: $version,
+              apps: [
+                {appname: "GHAS_demo", alerts: $ghas[0]},
+                {appname: "quizapp", alerts: $quiz[0]},
+                {appname: "webgoat", alerts: $web[0]},
+                {appname: "Bazar_Mobileapp", alerts: $baz[0]},
+                {appname: "DevsecGHAS", alerts: $devsec[0]}
+              ]
+            }' > all-repos-alerts.json
+
+      - name: Commit and push combined alerts
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add all-repos-alerts.json
+          git commit -m "Add combined alerts from all repos" || echo "No changes to commit"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+      - name: Add Power BI Dashboard Link to Summary
+        run: |
+          echo "## 📊 [View Power BI Dashboard](https://app.powerbi.com/groups/me/reports/0fd1b531-9001-421e-aeef-967f02efaf2e/0d145f0ab9b732ca0cb0?experience=power-bi)" >> $GITHUB_STEP_SUMMARY
+

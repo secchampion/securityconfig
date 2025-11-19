@@ -1,0 +1,45 @@
+name: Security Reports
+
+on:
+  push:
+    branch:  
+        main
+jobs:
+  fetch-and-combine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (target repo for combined file)
+        uses: actions/checkout@v4
+
+      - name: Download alerts from all repos
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          repos=("GHAS-demo" "quizapp" "webgoat" "Bazar_Mobileapp" "DevsecGHAS")
+          for repo in "${repos[@]}"; do
+            echo "Fetching $repo..."
+            gh repo clone champsecure/$repo tmp-$repo
+            cp tmp-$repo/${repo}-alerts.json . || echo "{}" > ${repo}-alerts.json
+            rm -rf tmp-$repo
+          done
+
+      - name: Combine all alerts into one JSON
+        run: |
+          jq -n \
+            --argfile ghas GHAS-demo-alerts.json \
+            --argfile quiz quizapp-alerts.json \
+            --argfile web webgoat-alerts.json \
+            --argfile baz Bazar_Mobileapp-alerts.json \
+            --argfile devsec DevsecGHAS-alerts.json \
+            '{GHAS_demo: $ghas, quizapp: $quiz, webgoat: $web, Bazar_Mobileapp: $baz, DevsecGHAS: $devsec}' \
+            > all-repos-alerts.json
+
+      - name: Commit and push combined alerts
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add all-repos-alerts.json
+          git commit -m "Add combined alerts from all repos" || echo "No changes to commit"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
